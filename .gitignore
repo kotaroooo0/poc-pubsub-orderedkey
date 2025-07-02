@@ -1,0 +1,18 @@
+# Dart
+.dart_tool/
+.packages
+pubspec.lock
+
+# Environment files
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Memory bank (optional - remove if you want to track it)
+# memory-bank/

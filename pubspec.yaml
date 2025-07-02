@@ -1,0 +1,18 @@
+name: poc_pubsub_orderedkey
+description: Google Cloud Pub/Sub OrderedKey behavior verification project
+version: 1.0.0
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  googleapis: ^11.0.0
+  googleapis_auth: ^1.4.1
+  dotenv: ^4.0.1
+
+dev_dependencies:
+  lints: ^3.0.0
+
+executables:
+  publisher: publisher
+  subscriber: subscriber
