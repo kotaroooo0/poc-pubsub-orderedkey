@@ -51,7 +51,7 @@ Future<void> runSubscriber(String subscriberId) async {
 
           // ランダムな処理時間（3-8秒）をシミュレート
           final random = Random();
-          final sleepSeconds = 3 + random.nextInt(6); // 3-8秒のランダム
+          final sleepSeconds = random.nextInt(6); // 0-5秒のランダムな待機時間
 
           print(
               '[$subscriberId] Pulled: ${messageData['message']} at ${pullTime.toIso8601String()}');
