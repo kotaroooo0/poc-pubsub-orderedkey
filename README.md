@@ -7,10 +7,13 @@ Google Cloud Pub/SubのOrderedKey機能の実際の挙動を検証するため�
 OrderedKeyを使用した場合の以下の挙動を確認します：
 
 **検証したい仮説:**
-- OrderedKeyは「配信順序」と「ACK順序」を保証する
+- OrderedKeyは「配信順序」を保証する
 - しかし、ACK完了前に次のメッセージがpull可能かどうかは不明
 
 **具体的なシナリオ:**
+
+以下のどちらになるのか不明なので検証する
+
 ```
 同じOrderedKeyでメッセージA、Bを送信した場合：
 
@@ -97,18 +100,41 @@ dart pub get
 dart run bin/publisher.dart
 ```
 
-同一OrderedKeyで複数のメッセージを連続送信します。
+**全15個のメッセージを同一OrderedKey（'test-key-1'）で送信**し、3並列Subscriberの競合状況を検証します。
 
 ### 2. Subscriberの実行
 
 ```bash
+# デフォルト設定（3 subscribers, maxMessages=3）
 dart run bin/subscriber.dart
+
+# カスタム設定
+dart run bin/subscriber.dart --subscribers=5 --max-messages=10
+
+# 短縮オプション
+dart run bin/subscriber.dart -s 2 -m 1
+
+# ヘルプ表示
+dart run bin/subscriber.dart --help
 ```
 
-3つの並列Subscriberが起動し、以下の動作を行います：
-- メッセージをpull
-- 3-8秒間のランダムスリープ（処理時間をシミュレート）
-- メッセージをACK
+#### オプション
+- `--subscribers` / `-s`: 並列Subscriber数（1-20、デフォルト: 3）
+- `--max-messages` / `-m`: 1回のpullで取得する最大メッセージ数（1-100、デフォルト: 3）
+- `--help` / `-h`: ヘルプ表示
+
+#### 動作内容
+指定された数の並列Subscriberが起動し、以下の動作を行います：
+- **バッチ処理**: 指定された`maxMessages`で複数メッセージを同時pull
+- 受信した全メッセージを順次処理してまとめてACK
+- 指定された時間のスリープ（処理時間をシミュレート）
+- **詳細なログ出力**:
+  - 📦 BATCH PULLED: バッチ受信メッセージ数表示
+  - 🔄 Processing: 各メッセージの処理状況（N/M形式）
+  - ✅ Processed: 個別メッセージ処理完了
+  - 🎯 BATCH ACKED: バッチ全体のACK完了
+  - ⏱️ バッチ処理時間の計測
+  - ═══ 区切り線で各バッチを明確化
 
 ## 📊 検証結果
 
@@ -119,33 +145,28 @@ dart run bin/subscriber.dart
 
 ### ✅ 検証結果まとめ
 
-| シナリオ      | OrderingKey                                          | 処理方式      | 結果                                                  |
-| ------------- | ---------------------------------------------------- | ------------- | ----------------------------------------------------- |
-| **シナリオ1** | 全て同じKey                                          | **直列処理**  | ✅ 前のメッセージのACK完了まで次のメッセージはブロック |
-| **シナリオ2** | 全て異なるKey                                        | **3並列処理** | ✅ OrderingKey指定なしと同様の並列処理                 |
-| **シナリオ3** | 2つのKeyグループ<br/>(1-5番目: Key1, 6-15番目: Key2) | **2並列処理** | ✅ 各KeyグループごとにACK順序保証                      |
+| シナリオ      | OrderingKey                                                          | 処理方式       | 結果                                                                                                                   |
+| ------------- | -------------------------------------------------------------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| **シナリオ1** | 全て同じKey + maxMessages=1                                          | **直列処理**   | ✅ 前のメッセージのACK完了まで次のメッセージはブロック                                                                  |
+| **シナリオ2** | 全て異なるKey + maxMessages=1                                        | **3並列処理**  | ✅ OrderingKey指定なしと同様の並列処理                                                                                  |
+| **シナリオ3** | 2つのKeyグループ + maxMessages=1<br/>(1-5番目: Key1, 6-15番目: Key2) | **2並列処理**  | ✅ 各KeyグループごとにACK順序保証                                                                                       |
+| **シナリオ4** | 全て同じKey + maxMessages=3                                          | **バッチ処理** | 🆕 前のメッセージのACK完了まで次のメッセージはブロック。ただし、同一Subscriber内では同じOrderingKeyを複数同時pull可能。 |
 
 ### 🎯 重要な発見
 
-**OrderedKeyは「ACK完了順序」を厳密に保証する**
+**OrderedKeyは「Subscriber単位での排他制御」を行う**
 
-- ✅ **同一OrderedKey内**: 前のメッセージがACKされるまで、次のメッセージは**どのSubscriberも**pull不可
-- ✅ **異なるOrderedKey間**: 完全に独立して並列処理可能
-- ✅ **複数KeyグループMIX**: 各Keyグループごとに独立した直列処理
+#### 🔍 詳細な挙動分析
 
-### 📈 処理パフォーマンス
+**1. 同一Subscriber内でのバッチ処理**
+- ✅ **maxMessages=3**: 同じOrderedKeyのメッセージを複数同時にpull可能
+- ✅ **順次処理**: pullした複数メッセージを順番に処理
+- ✅ **バッチACK**: 全メッセージ処理完了後にまとめてACK
 
-```
-同一Key (15メッセージ)     → 1並列 = 最も遅い
-2つのKeyグループ (15メッセージ) → 2並列 = 中程度
-異なるKey (15メッセージ)    → 3並列 = 最も速い
-```
-
-### 💡 実用的な示唆
-
-1. **高スループットが必要**: OrderingKeyを使わないか、多数の異なるKeyを使用
-2. **順序保証が必要**: 同一OrderingKeyを使用（ただしスループットは犠牲になる）
-3. **バランス型**: 関連するメッセージグループごとに異なるOrderingKeyを使用
+**2. 同じOrderingKeyのメッセージに対するSubscriber間の排他制御**
+- ✅ **厳密な排他**: あるSubscriberAが複数メッセージをpullしている間、他のSubscriberはpull不可
+- ✅ **ACK待ち**: SubscriberAが全メッセージをACKするまで、他のSubscriberは待機
+- ✅ **順序保証**: Subscriber間では厳密な順序を保証
 
 ## 期待される結果（検証前の仮説）
 
@@ -166,19 +187,3 @@ dart run bin/subscriber.dart
 [Subscriber-1] ACKing: Message A at 10:00:05
 [Subscriber-2] ACKing: Message B at 10:00:05
 ```
-
-
-## 注意事項
-
-- 実際のGoogle Cloud環境を使用するため、料金が発生する可能性があります
-- テスト後はリソースのクリーンアップを忘れずに行ってください
-- OrderedKeyは同一Subscription内でのみ有効です
-
-## クリーンアップ
-
-```bash
-# Subscriptionの削除
-gcloud pubsub subscriptions delete test-ordered-subscription
-
-# Topicの削除
-gcloud pubsub topics delete test-ordered-topic
